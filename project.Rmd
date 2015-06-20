@@ -1,0 +1,165 @@
+---
+title: "Human Activity Recognition using Random Forest Machine Learning Algorithm"
+output: html_document
+author: Andreas Rimbe
+date: June 20, 2015
+---
+
+## Summary
+
+In this course project for [Practial Machine Learning](https://www.coursera.org/course/predmachlearn) on Coursera, a random forest model is built to predict human activity based on the observations in the [Groupware@LES Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har) dataset.
+
+The HAR dataset contains accelerometer data collected from sensors on the belt, forearm, arm, and dumbell from 6 subjects that were asked to perform barbell lifts correctly and incorrectly in 5 different ways (sitting-down, standing-up, standing, walking, and sitting).
+
+A random forest model was built with 250 trees using 5-fold cross-validation and achieved an accuracy on the validation data of 99.47% with an out of sample error of 0.53%.
+
+On the testing dataset, 20 cases was predicted with 100% accuracy.
+
+## Load Data
+
+Training & testing datasets are loaded from [Groupware@LES Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har).
+
+```{r, cache=TRUE}
+
+trainFile <- "pml-training.csv"
+testFile  <- "pml-testing.csv"
+
+if (!file.exists(trainFile)) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile=trainFile, method="curl")
+}
+
+if (!file.exists(testFile)) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile=testFile, method="curl")
+}
+
+training <- read.csv(trainFile)
+testing <- read.csv(testFile)
+```
+
+## Explore data
+
+```{r}
+d1 <- dim(training); d1
+d2 <- dim(testing); d2
+```
+
+The training data set contains **`r d1[1]`** observations and **`r d1[2]`** variables and the test data set contains **`r d2[1]`** observations and **`r d2[2]`** variables.
+
+The response variable is called `classe` and consists of 5 factors, A-E representing these activities: sitting-down, standing-up, standing, walking, and sitting.
+
+Here's a summary how the `classe` response looks for the training dataset.
+
+```{r}
+summary(training$classe)
+```
+
+## Preprocess Data
+
+```{r, include=FALSE}
+library(caret)
+library(randomForest)
+library(doMC)
+```
+
+**1. Remove varables with NA's**
+
+The training dataset contains a lot of missing values, so we remove variables with NA's:
+
+```{r, cache=TRUE}
+sum(complete.cases(training))
+trainingCleaned <- training[, colSums(is.na(training)) == 0]
+dim(trainingCleaned)
+```
+
+**2. Remove variables with near zero variance**
+
+Variables with unique values e.g zero or near zero variance are removed as they have little or no impact on the response.
+
+```{r, cache=TRUE}
+nzv <- nearZeroVar(trainingCleaned, saveMetrics=TRUE)
+trainingCleaned <- trainingCleaned[, nzv[,"nzv"] == FALSE]
+dim(trainingCleaned)
+```
+
+**3. Remove non-accelerator columns**
+
+There are a few non-accelerator variables we can also remove, such as timestamp, user, window etc.
+
+```{r, cache=TRUE}
+trainingCleaned <- trainingCleaned[, -grep("timestamp|user_name|new_window|num_window|X", names(trainingCleaned))]
+d3 <- dim(trainingCleaned); d3
+```
+
+The cleaned training dataset now contains **`r d3[1]`** observations and **`r d3[2]`** variables.
+
+## Data Model
+
+We'll now fit a random forest model with 5-fold cross validation for a good bias-variance trade-off. The cleaned training dataset is split 70/30 into a training & validation dataset.
+
+```{r, cache=TRUE}
+set.seed(1234)
+inTrain <- createDataPartition(trainingCleaned$classe, p=0.7, list=FALSE)
+trainingData <- trainingCleaned[inTrain,]
+validationData <- trainingCleaned[-inTrain, ]
+
+# Use multiple cores for parallel processing
+numCores <- detectCores()
+registerDoMC(cores = numCores - 1)
+
+modelRF <- train(classe ~ .,
+                  data=trainingData, method="rf",
+                  trControl=trainControl(method="cv", number=5),
+                  prox=TRUE,
+                  allowParallel=TRUE,
+                  ntree=250)
+modelRF
+
+```
+
+### Estimated accuracy & out of sample error of the model
+
+The model is tested on the validation dataset:
+
+```{r}
+predictRF <- predict(modelRF, validationData)
+confusionMatrix(validationData$classe, predictRF)
+```
+
+The out of sample error should be low as the random forest algorithm performs cross-validation internally.
+
+```{r}
+oose <- sum(predictRF != validationData$classe) * 100 / nrow(validationData)
+```
+
+The estimated accuracy of the model on the validation dataset is **`r round(confusionMatrix(validationData$classe, predictRF)$overall[1]*100, 2)`%** and the estimated out of sample error is **`r round(oose, 2)`%**.
+
+See the appendix for plots of predictor importance, model accuracy for selected predictors and the error rate for the number of trees in the random forest.
+
+## Predition result on the testing dataset
+
+The result of applying the testing dataset on the model:
+
+```{r}
+testData <- testing[, names(testing) %in% names(trainingCleaned)]
+predictRFTest <- predict(modelRF, newdata=testData)
+predictRFTest
+```
+
+## Conclusion
+
+The selected random forest model was able to predict **100%** of the 20 cases provided in the testing dataset.
+
+## Appendix
+
+```{r}
+vi <- varImp(modelRF)
+plot(vi, main = "Top 20 most influencial predictors", top = 20)
+```
+
+```{r}
+plot(modelRF, main="Model accuracy by predictors")
+```
+
+```{r}
+plot(modelRF$finalModel, main="Model error rate by number of trees")
+```
